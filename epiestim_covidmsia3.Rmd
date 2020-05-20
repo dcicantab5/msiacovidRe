@@ -1,0 +1,208 @@
+---
+title: "Tracking Malaysia's Progress in the Pandemic: Estimates of the Daily Effective Reproduction Number"
+author: "Dr Saiful Safuan Md Sani"
+date: "2020-05-15"
+output: 
+  html_document:
+    css: custom.css
+    toc: yes
+---
+
+***
+
+[$R_e$](https://www.cebm.net/covid-19/when-will-it-be-over-an-introduction-to-viral-reproduction-numbers-r0-and-re/) is the reproduction number calculated at different time points during the epidemic, i.e. the average number of expected infected persons by a primary case in a population of susceptibles and infected individuals.  
+
+The estimation of $R_e$ requires knowing the [serial interval](https://wwwnc.cdc.gov/eid/article/26/6/20-0357_article). The serial interval is the time elapsed between the symptom onset of the primary case and the date of symptom onset of the secondary case. Here we used the estimated serial interval by Zhanwei et al (2020), with a mean of 3.96 days and a standard deviation 4.75 days (Zhanwei et al 2020). In this analyses, $R_e$ was estimated in a sliding window of 7-days. The method applied here is based on Wallinga and Teunis (2004).
+Estimates of $R_e$ were carried out in R v3.6.2, R-package EpiEstim v2.2-1. The code for plotting and calculating $R_e$ based on Churches (2020).
+
+***
+
+# $R_0$  
+Estimation of $R_0$ based on exponential growth slope. Assuming exponentially distributed [latent](https://arxiv.org/pdf/1705.01079.pdf) and infectious period of a SEIR model, and the following assumptions:  
+1. [latency estimate](https://www.cdc.gov/mmwr/volumes/69/wr/pdfs/mm6914e1-H.pdf): 3 days  
+2. [symptomatic viral shedding estimate](https://www.nature.com/articles/s41591-020-0869-5.pdf): 8 days  
+3. [serial interval estimate](https://wwwnc.cdc.gov/eid/article/26/6/20-0357_article): mean 3.96 days, SD 4.75 days.      
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+library(googlesheets)
+library(gsheet)
+library(dplyr)
+library(incidence)
+library(ggplot2)
+library(EpiEstim)
+```
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+url <- 'https://docs.google.com/spreadsheets/d/1jLn3UoJBfusBcEbLS8n8oPBJd6bUiA0WMqZ7LHNkdjw/edit?usp=sharing'
+data <- gsheet2tbl(url)
+data <- data %>% slice(3:nrow(data))
+```
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+#counts_msia <- data.frame(data$dailynew, data$ImportCases)
+#colnames(counts_msia) <- c("local", "imported") #imported has zero - leads to error in estimate_R function!
+#counts_msia <- as.matrix(counts_msia)
+#counts_msia
+```
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+counts_msia <- data.frame(data$dailynew, data$ImportCases)
+colnames(counts_msia) <- c("local", "imported")
+counts_msia <- as.matrix(counts_msia)
+#counts_msia
+```
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+incidmsia <- incidence(data$date)
+incidmsia$counts <- counts_msia
+#incidmsia
+mco <- data.frame(phase = c("MCO"),
+                   start = as.Date(c("2020-03-18")),
+                   end = as.Date(c("2020-05-04"))
+                 )
+#plot(incidmsia) + 
+ # theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  #geom_rect(data=mco, inherit.aes=FALSE, aes(xmin=start, xmax=end, ymin=0,
+   #             ymax=250, fill = phase), color="transparent", fill="black", alpha=0.3) +
+  #labs(title = "Epidemic Curve", subtitle = "MCO - shaded area")
+```
+```{r fig.width=8, fig.height=4,  message=FALSE, echo=FALSE, warning=FALSE}
+library(plotly)
+library(viridis)
+library(RColorBrewer)
+p <- plot(incidmsia) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_rect(data=mco, inherit.aes=FALSE, aes(xmin=start, xmax=end, ymin=0,
+                ymax=250, fill = phase), col = "transparent",  alpha=0.3) +
+  labs(title = "Epidemic Curve", subtitle = "MCO - shaded area") +
+  scale_fill_manual(values=c("darkgrey", "darkred", "lightgrey"), name = "Key")
+#fig <- ggplotly(p)
+#fig
+ggplotly(p, kwargs=list(layout=list(hovermode='x', autosize = F, width = 766, height = 500, margin = m)))
+```
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+logdata2 <- log(data$dailynew[1:21])
+Time <- data$date[1:21]
+model <- lm(logdata2 ~ Time)
+summary(model)
+```
+
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+model_predict <- cbind.data.frame(logdata2, Time, predict(model, interval = 'confidence'))
+
+# plot the points (actual observations), regression line, and confidence interval
+p2 <- ggplot(model_predict, aes(Time,logdata2))
+p2 <- p2 + geom_point()
+p2 <- p2 + geom_line(aes(Time, fit), col = "steelblue")
+p2 <- p2 + geom_ribbon(aes(ymin=lwr,ymax=upr), alpha=0.3) +
+  labs(y = "Log(Daily incidence)")
+ggplotly(p2)
+```
+
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+lat=3 #mean latency period; dys
+inf=8 #mean infectious period; dys
+b1=1/lat
+b2=1/inf
+r_model=summary.lm(model)$coefficients[2,1]
+sterr_model=summary.lm(model)$coefficients[2,2]
+ Rexp=(1+(r_model*lat))*(1+(r_model*inf)) 
+ Rexp_lower=(1+((r_model-1.96*sterr_model)*lat))*(1+((r_model-1.96*sterr_model)*inf))
+ Rexp_upper=(1+((r_model+1.96*sterr_model)*lat))*(1+((r_model+1.96*sterr_model)*inf)) 
+paste0(round(Rexp,1), " [95% CI: ", round(Rexp_lower, 1), ", ", round(Rexp_upper, 1), "]")
+```
+This mean value of $R_0$ was modelled based on the exponential growth phase of the epidemic curve for the period 2020-03-03 to 2020-03-23. In comparison, the official declared value was 3.5, which was based on contact tracing averaging.  
+  
+***
+
+# Daily $R_e$    
+## Parametric Serial Interval (SI)  
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+dataR <- estimate_R(data$dailynew,  
+                    method="parametric_si",  
+                    config = make_config(list(
+                      mean_si = 3.96, 
+                      std_si = 4.75))
+                    ) 
+#plot(dataR, what = c("incid"), options_I = list(col = "forestgreen")) # , "R", "SI"
+#p3 <- plot(dataR, what = c("R"), options_R = list(col = "steelblue")) # , "R", "SI"
+p4 <- plot(dataR, what = c("SI"), options_SI = list(col = "deeppink")) # , "R", "SI"
+```
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+#ggplotly(p3)
+```
+
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+dfp33 <- data.frame(dataR$R)
+dfp33$t_end <- data$date[8:length(data$date)]
+#str(dfp33)
+
+p33 <- ggplot(dfp33, aes(t_end,Mean.R.))
+#p33<- p33+ geom_point()
+p33<- p33+ geom_line(col = "steelblue")
+p33<- p33+ geom_ribbon(aes(ymin=Quantile.0.025.R.,ymax=Quantile.0.975.R.), alpha=0.3) +
+  labs(y = "R", x = "Time", title = "Daily Effective Reproduction Number")
+ggplotly(p33) %>%
+  layout(title = list(text = paste0('Daily Effective Reproduction Number',
+                                    '<br>',
+                                    '<sup>',
+                                    'Parametric estimate',
+                                    '</sup>')))
+```
+
+
+
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+ggplotly(p4)
+```
+
+## Uncertain Serial Interval  
+The model was also adjusted for uncertainty in the serial interval assumption.  
+```{r message=FALSE, echo=FALSE, warning=FALSE}
+## we choose to draw:
+## - the mean of the SI in a Normal(3.96, 1), truncated at 1 and 21
+## - the sd of the SI in a Normal(4.75, 0.5), truncated at 0.5 and 7.5
+config <- make_config(list(mean_si = 3.96, std_mean_si = 0.5,
+                           min_mean_si = 3.5, max_mean_si = 4.5,
+                           std_si = 4.75, std_std_si = 0.5,
+                           min_std_si = 4.5, max_std_si = 5.1))
+# https://drive.google.com/file/d/1HQex9HFdNy883zTiUEywsBiFEb_orr2t/view   
+
+res_uncertain_si <- estimate_R(data$dailynew,
+                               method = "uncertain_si",
+                               config = config)
+#> Default config will estimate R on weekly sliding windows.
+#>     To change this change the t_start and t_end arguments.
+
+#p5 <- plot(res_uncertain_si, what = "R", legend = FALSE, options_R = list(col = "steelblue")) 
+#plot(res_uncertain_si, what = "incid", legend = FALSE, options_I = list(col = "steelblue")) + geom_vline(xintercept = 16, linetype = "dotted")
+p6 <- plot(res_uncertain_si, what = "SI", legend = FALSE, options_SI = list(col = "steelblue")) 
+```
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+#ggplotly(p5)
+```
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+dfp55 <- data.frame(res_uncertain_si$R)
+dfp55$t_end <- data$date[8:length(data$date)]
+#str(dfp55)
+
+p55 <- ggplot(dfp55, aes(t_end,Mean.R.))
+p55<- p55+ geom_line(col = "steelblue")
+p55<- p55+ geom_ribbon(aes(ymin=Quantile.0.025.R.,ymax=Quantile.0.975.R.), alpha=0.3) +
+  labs(y = "R", x = "Time", title = "Daily Effective Reproduction Number")
+ggplotly(p55) %>%
+  layout(title = list(text = paste0('Daily Effective Reproduction Number',
+                                    '<br>',
+                                    '<sup>',
+                                    'SI adjusted for uncertainty',
+                                    '</sup>')))
+```
+```{r fig.width=8, fig.height=4, message=FALSE, echo=FALSE, warning=FALSE}
+ggplotly(p6)
+```
+
+***
+
+## References
+
+[Vignette](https://cran.r-project.org/web/packages/EpiEstim/vignettes/demo.html)  
+[Worked example](http://rstudio-pubs-static.s3.amazonaws.com/382657_886272576cb343eea9b1070f4329d5f2.html)   
+[Other examples](https://www.folkhalsomyndigheten.se/contentassets/4b4dd8c7e15d48d2be744248794d1438/sweden-estimate-of-the-effective-reproduction-number.pdf)  
+[Zhanwei et al (2020)](https://wwwnc.cdc.gov/eid/article/26/6/20-0357_article)  
+[Churches (2020)](https://timchurches.github.io/blog/posts/2020-02-18-analysing-covid-19-2019-ncov-outbreak-data-with-r-part-1/)  
+
